@@ -1,4 +1,10 @@
 import User from "../models/user.js";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import gravatar from "gravatar"
+import Jimp from "jimp";
+
+
 import jwt from "jsonwebtoken";
 import HttpError from "../helpers/HttpError.js";
 import { ctrlWrapper } from "../helpers/ctrlWrapper.js";
@@ -15,6 +21,7 @@ const register = async (req, res) => {
   const result = await User.create({
     email: normalizedEmail,
     password: passwordHash,
+    avatar:gravatar.url(normalizedEmail, {s: '250', r: 'x', d: 'retro'}, false),
     subscription,
   });
   console.log(result);
@@ -54,10 +61,42 @@ const logout = async (req, res, next) => {
 
 };
 
+const uploadAvatar = async (req, res, next)=> {
+  const { id } = req.user;
+
+  const avatarDir = path.join(process.cwd(),  "public", "avatars");
+  const { path: tempUpload, originalname } = req.file;
+  console.log(tempUpload)
+  const filename = `${id}_${originalname}`;
+  await Jimp.read(tempUpload)
+      .then((image) => {
+          return image
+              .resize(250, 250) 
+             .write(tempUpload); 
+      })
+      .catch((err) => {
+          console.error(err);
+      });
+  
+  const resultUpload = path.join(avatarDir, filename);
+
+  await fs.rename(tempUpload, resultUpload);
+
+  const avatar = path.join("avatars", filename);
+
+  await User.findByIdAndUpdate(id, { avatar });
+
+  res.send({
+      avatar
+  });
+
+}
+
 const controllers = { 
   register: ctrlWrapper(register),
   login: ctrlWrapper(login),
   logout:ctrlWrapper(logout),
+  uploadAvatar:ctrlWrapper(uploadAvatar),
 };
 
 export default controllers;
