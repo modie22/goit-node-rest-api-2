@@ -29,6 +29,10 @@ function auth(req, res, next) {
     if(user.token !== token){
          return res.status(401).send({message: "Invalid token"});
     }
+    if (user.verify === false) {
+      return res.status(401).send({ message: "Your account is not verified" });
+    }
+  
 
     req.user = {
       id: decode.id,

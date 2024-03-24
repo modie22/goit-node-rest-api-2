@@ -3,12 +3,23 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import gravatar from "gravatar"
 import Jimp from "jimp";
+import nodemailer from "nodemailer";
+import crypto from "node:crypto";
 
 
 import jwt from "jsonwebtoken";
 import HttpError from "../helpers/HttpError.js";
 import { ctrlWrapper } from "../helpers/ctrlWrapper.js";
 import bcrypt, { hash } from "bcrypt";
+
+const transport = nodemailer.createTransport({
+  host: "sandbox.smtp.mailtrap.io",
+  port: 2525,
+  auth: {
+    user: process.env.MAILTRAP_USER,
+    pass: process.env.MAILTRAP_PASSWORD,
+  }
+});
 
 const register = async (req, res) => {
   const { email, password, subscription } = req.body;
@@ -18,9 +29,22 @@ const register = async (req, res) => {
     throw HttpError(409, "Email in use");
   }
   const passwordHash = await bcrypt.hash(password, 10);
+
+///send email
+const verifyToken = crypto.randomUUID();
+
+await transport.sendMail({
+  to:normalizedEmail,
+  from:"super.anzori@gmail.com",
+  subject:"Welcome to Phone book",
+  html:`To confirm you registration please click on the <a href="http://localhost:3000/api/auth/verify/${verifyToken}">link</a>`,
+  text:`To confirm you registration please open the link http://localhost:3000/api/auth/verify/${verifyToken}`
+})
+
   const result = await User.create({
     email: normalizedEmail,
     password: passwordHash,
+    verifyToken,
     avatar:gravatar.url(normalizedEmail, {s: '250', r: 'x', d: 'retro'}, false),
     subscription,
   });
@@ -38,6 +62,9 @@ const login = async (req, res) => {
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
     throw HttpError(401, "error pass");
+  }
+  if (user.verify === false) {
+    return res.status(401).send({ message: "Your account is not verified" });
   }
 
   const token = jwt.sign(
@@ -91,12 +118,53 @@ const uploadAvatar = async (req, res, next)=> {
   });
 
 }
+const verify = async (req, res, next)=> {
+  const { verificationtoken } = req.params;
+
+    const user = await User.findOne({ verifyToken: verificationtoken });
+    if (user === null) {
+      return res.status(404).send({ message: "Not found" });
+    }
+
+    await User.findByIdAndUpdate(user._id, { verify: true, verifyToken: null });
+
+    res.send({ message: "Verification successful" });
+
+}
+const resendVerifyEmail = async (req, res) => {
+  const { email } = req.body;
+  const normalizedEmail = email.toLowerCase();
+  const user = await User.findOne({ email:normalizedEmail });
+
+  if (!user) {
+      throw HttpError(401, "Email not found");
+  };
+
+  if (user.verify) {
+      throw HttpError(400, "Verification has already been passed")
+  };
+
+await transport.sendMail({
+  to:normalizedEmail,
+  from:"super.anzori@gmail.com",
+  subject:"Welcome to Phone book",
+  html:`To confirm you registration please click on the <a href="http://localhost:3000/api/auth/verify/${user.verifyToken}">link</a>`,
+  text:`To confirm you registration please open the link http://localhost:3000/api/auth/verify/${user.verifyToken}`
+})
+
+  res.send({
+      message: "Verification email sent",
+  });
+  
+};
 
 const controllers = { 
   register: ctrlWrapper(register),
   login: ctrlWrapper(login),
   logout:ctrlWrapper(logout),
   uploadAvatar:ctrlWrapper(uploadAvatar),
+  verify:ctrlWrapper(verify),
+  resendVerifyEmail:ctrlWrapper(resendVerifyEmail),
 };
 
 export default controllers;
